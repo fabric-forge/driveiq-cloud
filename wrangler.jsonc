@@ -1,0 +1,28 @@
+// DriveIQ Cloud — Cloudflare Worker API
+// Deploy: npx wrangler deploy
+// Dev:    npx wrangler dev
+//
+// Phase 1 scope: vehicle/maintenance/reminders CRUD only, backed by D1.
+// No secrets needed yet — Qdrant/OpenAI/R2 land in Phase 2 (RAG) and
+// Phase 3 (CARFAX import, uploads). Access control is Cloudflare Access,
+// configured in the dashboard/Terraform, not here.
+{
+	"name": "driveiq-api",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2026-07-01",
+	"account_id": "5dc9134dee1e699eac6044d2c919e3ec",
+	"routes": [
+		{
+			"pattern": "driveiq-api.ry-ops.dev/*",
+			"zone_name": "ry-ops.dev"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "driveiq",
+			"database_id": "429ec88a-db5e-429e-9d58-78c571147e8b",
+			"migrations_dir": "migrations"
+		}
+	]
+}

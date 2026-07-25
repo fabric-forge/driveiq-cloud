@@ -1,0 +1,32 @@
+{
+  "name": "@fabric-forge/driveiq-cloud",
+  "version": "0.1.0",
+  "description": "DriveIQ backend — Hono on Cloudflare Workers + D1 (serverless replatform of ry-ops/DriveIQ)",
+  "author": "ry-ops.dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fabric-forge/driveiq-cloud.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply driveiq --local",
+    "db:migrate:remote": "wrangler d1 migrations apply driveiq --remote",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "^4.12.23"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260710.1",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.98.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
