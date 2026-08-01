@@ -9,6 +9,7 @@ import { vehicleRoutes } from './routes/vehicle.js';
 import { maintenanceRoutes } from './routes/maintenance.js';
 import { reminderRoutes } from './routes/reminders.js';
 import { searchRoutes } from './routes/search.js';
+import { pagesRoutes } from './routes/pages.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -27,5 +28,6 @@ app.route('/api/vehicle', vehicleRoutes);
 app.route('/api/maintenance', maintenanceRoutes);
 app.route('/api/reminders', reminderRoutes);
 app.route('/api/search', searchRoutes);
+app.route('/api/pages', pagesRoutes);
 
 export default app;
