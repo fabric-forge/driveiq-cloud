@@ -2,10 +2,13 @@
 // Deploy: npx wrangler deploy
 // Dev:    npx wrangler dev
 //
-// Phase 1 scope: vehicle/maintenance/reminders CRUD only, backed by D1.
-// No secrets needed yet — Qdrant/OpenAI/R2 land in Phase 2 (RAG) and
-// Phase 3 (CARFAX import, uploads). Access control is Cloudflare Access,
-// configured in the dashboard/Terraform, not here.
+// Phase 1: vehicle/maintenance/reminders CRUD, backed by D1.
+// Phase 2 (Aiana / RAG): Qdrant + Workers AI embeddings (bge-base-en-v1.5,
+// via the native AI binding below — no separate API key) + Anthropic
+// generation.
+// SECRETS (set out-of-band via `npx wrangler secret put <NAME>`, never
+// committed): ANTHROPIC_API_KEY, QDRANT_URL, QDRANT_API_KEY.
+// R2 (Phase 3, CARFAX import/uploads) not configured yet.
 {
 	"name": "driveiq-api",
 	"main": "src/worker/index.ts",
@@ -17,6 +20,14 @@
 			"zone_name": "ry-ops.dev"
 		}
 	],
+	"vars": {
+		"QDRANT_COLLECTION": "driveiq_manual_v1",
+		"EMBEDDING_MODEL": "@cf/baai/bge-base-en-v1.5",
+		"CLAUDE_MODEL": "claude-sonnet-4-6"
+	},
+	"ai": {
+		"binding": "AI"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
