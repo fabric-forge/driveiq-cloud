@@ -8,6 +8,7 @@ import type { Env } from './env.js';
 import { vehicleRoutes } from './routes/vehicle.js';
 import { maintenanceRoutes } from './routes/maintenance.js';
 import { reminderRoutes } from './routes/reminders.js';
+import { searchRoutes } from './routes/search.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,5 +26,6 @@ app.get('/health', (c) => c.json({ status: 'ok', service: 'driveiq-api', version
 app.route('/api/vehicle', vehicleRoutes);
 app.route('/api/maintenance', maintenanceRoutes);
 app.route('/api/reminders', reminderRoutes);
+app.route('/api/search', searchRoutes);
 
 export default app;
