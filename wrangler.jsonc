@@ -9,6 +9,14 @@
 // SECRETS (set out-of-band via `npx wrangler secret put <NAME>`, never
 // committed): ANTHROPIC_API_KEY, QDRANT_URL, QDRANT_API_KEY.
 // R2 (Phase 3, CARFAX import/uploads) not configured yet.
+//
+// Two routes bind this Worker: the standalone API host, and a same-origin
+// /api/* path on the Pages frontend's own hostname. The frontend uses the
+// latter exclusively — Cloudflare Access can't selectively bypass just a
+// CORS preflight (no HTTP-method rule in its policy builder), so a
+// cross-origin credentialed POST/PATCH from driveiq.ry-ops.dev to
+// driveiq-api.ry-ops.dev always 403s on the OPTIONS preflight. Same-origin
+// requests never trigger a preflight at all.
 {
 	"name": "driveiq-api",
 	"main": "src/worker/index.ts",
@@ -17,6 +25,10 @@
 	"routes": [
 		{
 			"pattern": "driveiq-api.ry-ops.dev/*",
+			"zone_name": "ry-ops.dev"
+		},
+		{
+			"pattern": "driveiq.ry-ops.dev/api/*",
 			"zone_name": "ry-ops.dev"
 		}
 	],
