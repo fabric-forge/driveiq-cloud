@@ -11,7 +11,14 @@ import { reminderRoutes } from './routes/reminders.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use('*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }));
+app.use(
+	'*',
+	cors({
+		origin: ['https://driveiq.ry-ops.dev', 'https://driveiq-ui.pages.dev'],
+		allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+		credentials: true,
+	})
+);
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'driveiq-api', version: '0.1.0' }));
 
