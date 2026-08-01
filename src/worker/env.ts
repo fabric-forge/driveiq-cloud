@@ -6,6 +6,7 @@
 export interface Env {
 	DB: D1Database;
 	AI: Ai;
+	PAGE_IMAGES: R2Bucket;
 	QDRANT_COLLECTION: string;
 	EMBEDDING_MODEL: string;
 	CLAUDE_MODEL: string;

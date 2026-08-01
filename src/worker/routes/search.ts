@@ -106,6 +106,12 @@ If the documentation doesn't fully answer the question, say what you found and s
 			document: r.document_name,
 			page: r.page_number,
 			relevance: Math.round(r.score * 100) / 100,
+			...(r.page_number
+				? {
+						thumbnail_url: `/api/pages/${encodeURIComponent(r.document_name)}/${r.page_number}/thumbnail`,
+						fullsize_url: `/api/pages/${encodeURIComponent(r.document_name)}/${r.page_number}/full`,
+					}
+				: {}),
 		})),
 	});
 });

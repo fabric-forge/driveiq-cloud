@@ -40,6 +40,13 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"r2_buckets": [
+		{
+			"binding": "PAGE_IMAGES",
+			"bucket_name": "driveiq-manual-pages",
+			"remote": true
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",
