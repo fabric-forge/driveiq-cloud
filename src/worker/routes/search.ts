@@ -7,8 +7,29 @@
 import { Hono } from 'hono';
 import type { Env } from '../env.js';
 import { searchDocuments, collectionInfo, embedBatch, upsertChunks, ensureCollection } from '../core/qdrant.js';
-import { generate } from '../core/anthropic.js';
+import { generateWithTools, extractText, type AnthropicTool, type LLMMessage } from '../core/anthropic.js';
 import { buildServiceStatus, formatServiceStatusTable, type MaintenanceRecordRow } from '../core/maintenanceSchedule.js';
+
+// Lets the owner tell Aiana about a scheduled appointment in plain
+// conversation ("I have an oil change booked for 9/15 at Kari Toyota")
+// instead of using the reminder form. Tagged category='appointment' so
+// driveiq-ui's "Ask Aiana" deep link / spec preview skips these — there's no
+// manual page to look up for an appointment, only for a part or fluid.
+const CREATE_REMINDER_TOOL: AnthropicTool = {
+	name: 'create_reminder',
+	description:
+		"Add an upcoming service appointment to the owner's \"What's Next\" list. Only call this when the owner is describing an actual scheduled or planned appointment (a specific date and/or mileage), not when they're just asking a general maintenance question. If they mention wanting to schedule something but haven't given you a date or mileage yet, ask them for one in your reply instead of calling this tool.",
+	input_schema: {
+		type: 'object',
+		properties: {
+			title: { type: 'string', description: 'Short title, e.g. "Oil Change" or "Tire Rotation at Kari Toyota"' },
+			due_date: { type: 'string', description: 'ISO date (YYYY-MM-DD) the appointment is scheduled for, if known' },
+			due_mileage: { type: 'number', description: 'Mileage the appointment is tied to, if the owner mentioned one' },
+			description: { type: 'string', description: "Any extra detail the owner mentioned (location, reason, provider), if any" },
+		},
+		required: ['title'],
+	},
+};
 
 export const searchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -113,21 +134,58 @@ ${vehicleLine}
 Answer using the provided documentation and/or service history table below, whichever is relevant to the question. Be concise, practical, and safety-focused.
 When asked about a past service (e.g. "when was my last oil change"), answer from the service history table, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
 If a service has never been logged ("Never logged" status), say so plainly rather than guessing a date.
-If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.`;
+If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.
+If the owner describes a scheduled or planned service appointment (a specific date and/or mileage), use the create_reminder tool to add it for them — don't just say you will, actually call the tool.`;
 
 	const contextParts = [
 		docContext ? `Context from vehicle documentation:\n${docContext}` : null,
 		serviceHistoryContext,
 	].filter((p): p is string => p !== null);
 
-	const answer = await generate(c.env, {
-		system,
-		messages: [{ role: 'user', content: `${contextParts.join('\n\n---\n\n')}\n\nQuestion: ${body.query}` }],
-		maxTokens: 600,
-	});
+	const messages: LLMMessage[] = [{ role: 'user', content: `${contextParts.join('\n\n---\n\n')}\n\nQuestion: ${body.query}` }];
+
+	const first = await generateWithTools(c.env, { system, messages, tools: [CREATE_REMINDER_TOOL], maxTokens: 600 });
+
+	const toolUse = first.content.find((b) => b.type === 'tool_use' && b.name === 'create_reminder');
+	let answer: string;
+	let reminderCreated = false;
+
+	if (first.stop_reason === 'tool_use' && toolUse) {
+		const input = toolUse.input as { title: string; due_date?: string; due_mileage?: number; description?: string };
+		const reminderType = input.due_date && input.due_mileage ? 'both' : input.due_mileage ? 'mileage' : 'date';
+
+		if (vehicle) {
+			await c.env.DB.prepare(
+				`INSERT INTO reminders (vehicle_id, title, description, reminder_type, due_date, due_mileage, category, notify_days_before, notify_miles_before)
+				 VALUES (?, ?, ?, ?, ?, ?, 'appointment', 7, 500)`
+			)
+				.bind(vehicle.id, input.title, input.description ?? null, reminderType, input.due_date ?? null, input.due_mileage ?? null)
+				.run();
+			reminderCreated = true;
+		}
+
+		const toolResultText = reminderCreated
+			? `Added "${input.title}" to the owner's What's Next list.`
+			: 'Could not add the reminder — no vehicle on record.';
+
+		const followup = await generateWithTools(c.env, {
+			system,
+			messages: [
+				...messages,
+				{ role: 'assistant', content: first.content },
+				{ role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id!, content: toolResultText }] },
+			],
+			tools: [CREATE_REMINDER_TOOL],
+			maxTokens: 300,
+		});
+		answer = extractText(followup.content);
+	} else {
+		answer = extractText(first.content);
+	}
 
 	return c.json({
 		answer,
+		reminder_created: reminderCreated,
 		sources: results.map((r) => ({
 			document: r.document_name,
 			page: r.page_number,
