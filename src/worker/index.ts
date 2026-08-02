@@ -11,6 +11,7 @@ import { reminderRoutes } from './routes/reminders.js';
 import { searchRoutes } from './routes/search.js';
 import { pagesRoutes } from './routes/pages.js';
 import { importRoutes } from './routes/import.js';
+import { vehicleSpecsRoutes } from './routes/vehicleSpecs.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -31,5 +32,6 @@ app.route('/api/reminders', reminderRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/pages', pagesRoutes);
 app.route('/api/import', importRoutes);
+app.route('/api/vehicle-specs', vehicleSpecsRoutes);
 
 export default app;
