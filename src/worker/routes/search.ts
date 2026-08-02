@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import type { Env } from '../env.js';
 import { searchDocuments, collectionInfo, embedBatch, upsertChunks, ensureCollection } from '../core/qdrant.js';
 import { generate } from '../core/anthropic.js';
+import { buildServiceStatus, formatServiceStatusTable, type MaintenanceRecordRow } from '../core/maintenanceSchedule.js';
 
 export const searchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -57,32 +58,50 @@ searchRoutes.post('/ask', async (c) => {
 	const body = await c.req.json<{ query: string }>();
 	if (!body.query?.trim()) return c.json({ detail: 'query is required' }, 400);
 
+	// Manual/document RAG search — optional. A collection that doesn't exist
+	// yet or a query with no relevant chunks shouldn't block answering
+	// service-history questions ("when was my last oil change?"), which need
+	// no document context at all.
 	const info = await collectionInfo(c.env);
-	if (!info || info.points_count === 0) {
-		return c.json({ detail: 'No documents ingested. Run the ingestion script first.' }, 404);
-	}
+	const results = info && info.points_count > 0 ? await searchDocuments(c.env, body.query, 5, 0.35) : [];
 
-	const results = await searchDocuments(c.env, body.query, 5, 0.35);
-
-	if (results.length === 0) {
-		return c.json({
-			answer:
-				"I couldn't find relevant information in your vehicle documentation for this question. Try rephrasing, or consult your owner's manual directly.",
-			sources: [],
-		});
-	}
-
-	const context = results
-		.map((r) => `[${r.document_name}${r.page_number ? `, p.${r.page_number}` : ''}]\n${r.content}`)
-		.join('\n\n---\n\n');
+	const docContext = results.length
+		? results.map((r) => `[${r.document_name}${r.page_number ? `, p.${r.page_number}` : ''}]\n${r.content}`).join('\n\n---\n\n')
+		: null;
 
 	const vehicle = await c.env.DB.prepare('SELECT * FROM vehicles LIMIT 1').first<{
+		id: number;
 		year: number;
 		make: string;
 		model: string;
 		trim: string | null;
 		vin: string;
+		current_mileage: number | null;
 	}>();
+
+	// Service history — always fetched, so Aiana can answer "when was my last
+	// X" and "when is my next X due" for every maintenance type on file, not
+	// just what's in the owner's manual.
+	const { results: records } = vehicle
+		? await c.env.DB.prepare(
+				'SELECT maintenance_type, date_performed, mileage FROM maintenance_records WHERE vehicle_id = ? ORDER BY date_performed DESC'
+			)
+				.bind(vehicle.id)
+				.all<MaintenanceRecordRow>()
+		: { results: [] as MaintenanceRecordRow[] };
+
+	const serviceHistoryContext =
+		records.length > 0
+			? `Service history for this vehicle (current odometer: ${vehicle?.current_mileage?.toLocaleString() ?? 'unknown'} mi). "Next Due" is projected from the manufacturer-recommended interval after the last time that service was performed — use it to tell the owner when their next service of that type is due.\n\n${formatServiceStatusTable(buildServiceStatus(records, vehicle?.current_mileage ?? null))}`
+			: null;
+
+	if (!docContext && !serviceHistoryContext) {
+		return c.json({
+			answer:
+				"I couldn't find relevant information in your vehicle documentation or service history for this question. Try rephrasing, or consult your owner's manual directly.",
+			sources: [],
+		});
+	}
 
 	const vehicleLine = vehicle
 		? `You help answer questions about a ${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim ?? ''}.\nVIN: ${vehicle.vin}`
@@ -91,12 +110,19 @@ searchRoutes.post('/ask', async (c) => {
 	const system = `You are Aiana, an intelligent assistant for vehicle owners.
 ${vehicleLine}
 
-Answer based on the provided documentation. Be concise, practical, and safety-focused.
-If the documentation doesn't fully answer the question, say what you found and suggest checking the full manual.`;
+Answer using the provided documentation and/or service history table below, whichever is relevant to the question. Be concise, practical, and safety-focused.
+When asked about a past service (e.g. "when was my last oil change"), answer from the service history table, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
+If a service has never been logged ("Never logged" status), say so plainly rather than guessing a date.
+If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.`;
+
+	const contextParts = [
+		docContext ? `Context from vehicle documentation:\n${docContext}` : null,
+		serviceHistoryContext,
+	].filter((p): p is string => p !== null);
 
 	const answer = await generate(c.env, {
 		system,
-		messages: [{ role: 'user', content: `Context from vehicle documentation:\n${context}\n\nQuestion: ${body.query}` }],
+		messages: [{ role: 'user', content: `${contextParts.join('\n\n---\n\n')}\n\nQuestion: ${body.query}` }],
 		maxTokens: 600,
 	});
 
