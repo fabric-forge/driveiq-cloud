@@ -139,6 +139,20 @@ re-generation + auth swap), recommend:
     lines) — nothing in `driveiq-ui` surfaces that yet. R2-backed PDF
     upload (vs. the current local-script-reads-from-disk flow) still
     pending, same as uploads/photos generally.
+  - **Started 2026-08-02**: curated vehicle specs — the owner's manual
+    doesn't have exact OEM part numbers/capacities for most maintenance
+    items (that's factory-service-manual/dealer-parts-catalog territory), so
+    the What's Next forecast cards were falling back to a live RAG+LLM
+    lookup that either came back vague or got truncated in the card. Added
+    `vehicle_specs` D1 table (`migrations/0004_vehicle_specs.sql`) +
+    `GET/POST /api/vehicle-specs`, seeded via `scripts/seed-vehicle-specs.mjs`
+    with 5 researched-and-owner-reviewed specs (tire size/rotation, oil,
+    spark plugs, cabin filter, drive belt). Deliberately a plain table, not
+    another Qdrant document — these are exact facts, not prose to
+    semantically search. `driveiq-ui` reads it directly for covered types and
+    still falls back to the live Aiana lookup for anything not yet
+    researched. Not auto-refreshed; re-run the seed script to correct a
+    value.
 
 Each phase ships and is checked against the real site before the next starts,
 rather than one large PR.
