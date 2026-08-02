@@ -130,6 +130,15 @@ re-generation + auth swap), recommend:
   (`/api/moe/ask`), uploads/photos. MCP server (`mcp/server.py`) stays a
   local dev tool per the handoff — not ported to the Worker unless you decide
   otherwise.
+  - **Started 2026-08-02**: CARFAX report import, structured-fields slice
+    only (`carfax_reports` D1 table, `migrations/0002_carfax_reports.sql` +
+    `GET/POST /api/import/carfax-report`, `scripts/import-carfax.mjs`).
+    Feeds the Dashboard's Est. Value stat + owner-count badge. Does **not**
+    port the reference's per-line-item service-record/dealer/warranty
+    extraction (`backend/app/services/carfax_parser.py`'s other ~600
+    lines) — nothing in `driveiq-ui` surfaces that yet. R2-backed PDF
+    upload (vs. the current local-script-reads-from-disk flow) still
+    pending, same as uploads/photos generally.
 
 Each phase ships and is checked against the real site before the next starts,
 rather than one large PR.
