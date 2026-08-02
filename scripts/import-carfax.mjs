@@ -33,7 +33,7 @@ function extractVin(text) {
 function extractVehicleSpecs(text) {
 	const specs = { year: null, make: null, model: null, trim: null, engine: null, drivetrain: null };
 
-	const vehicleMatch = /(\d{4})\s+(TOYOTA|Honda|Ford|Chevrolet|Nissan|BMW|Mercedes|Lexus|Acura)\s*\n?\s*([A-Z0-9]+(?:\s+[A-Z0-9]+)*)/i.exec(
+	const vehicleMatch = /(\d{4})\s+(TOYOTA|Honda|Ford|Chevrolet|Nissan|BMW|Mercedes|Lexus|Acura)\s*\n?\s*([A-Z0-9]+(?:\s+(?!VIN\b)[A-Z0-9]+)*)/i.exec(
 		text
 	);
 	if (vehicleMatch) {
@@ -82,8 +82,11 @@ function extractOwnerCount(text) {
 }
 
 function extractLastOdometer(text) {
-	let m = /Last\s+reported\s+odometer\s+reading\s*(\d{1,3},?\d{0,3})/.exec(text);
-	if (!m) m = /(\d{1,3},?\d{3})\s*Last\s+reported\s+odometer/.exec(text);
+	// Comma is mandatory: without it, a loose \d{0,3} tail matches any nearby
+	// 1-4 digit number (e.g. a model year on the following line) as a false
+	// positive odometer reading.
+	let m = /Last\s+reported\s+odometer\s+reading\s*(\d{1,3},\d{3})/.exec(text);
+	if (!m) m = /(\d{1,3},\d{3})\s*Last\s+reported\s+odometer/.exec(text);
 	return m ? Number(m[1].replace(/,/g, '')) : null;
 }
 
