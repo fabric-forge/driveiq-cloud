@@ -165,14 +165,20 @@ ${vehicleLine}
 Answer using the provided documentation, service history table, and/or recalls list below, whichever is relevant to the question. Be concise, practical, and safety-focused.
 When asked about a past service (e.g. "when was my last oil change"), answer from the service history table, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
 If a service has never been logged ("Never logged" status), say so plainly rather than guessing a date.
-When asked about recalls (e.g. "how many recalls", "is there an open recall"), always answer from the recalls list, not from any recall mentions that happen to appear in retrieved documentation — the list is the complete, exact set for this VIN.
+When asked about recalls (e.g. "how many recalls", "is there an open recall"), always answer from the NHTSA recalls list below, never from a CARFAX report's own "no open recalls reported to CARFAX" line — CARFAX's recall data feed is separate from NHTSA's and is frequently incomplete or stale, so that specific claim must be ignored even if it's the retrieved documentation's most relevant-looking match. The NHTSA recalls list is the complete, exact set for this VIN; if it's absent from the context below, say recall data isn't available rather than trusting a CARFAX summary line.
 If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.
 If the owner describes a scheduled or planned service appointment (a specific date and/or mileage), use the create_reminder tool to add it for them — don't just say you will, actually call the tool.`;
 
 	const contextParts = [
-		docContext ? `Context from vehicle documentation:\n${docContext}` : null,
-		serviceHistoryContext,
+		// Recalls and service history first — these are exact, structured facts
+		// that should win over anything semantically similar retrieved from
+		// document RAG (e.g. a CARFAX report's own "no open recalls reported to
+		// CARFAX" boilerplate, which is a different, less complete data source
+		// than the NHTSA recalls list and has previously caused the model to
+		// answer from the wrong source when doc context also mentions recalls).
 		recallsContext,
+		serviceHistoryContext,
+		docContext ? `Context from vehicle documentation:\n${docContext}` : null,
 	].filter((p): p is string => p !== null);
 
 	const messages: LLMMessage[] = [{ role: 'user', content: `${contextParts.join('\n\n---\n\n')}\n\nQuestion: ${body.query}` }];
