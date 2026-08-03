@@ -13,6 +13,7 @@ import { pagesRoutes } from './routes/pages.js';
 import { importRoutes } from './routes/import.js';
 import { vehicleSpecsRoutes } from './routes/vehicleSpecs.js';
 import { recallsRoutes } from './routes/recalls.js';
+import { titleChecksRoutes } from './routes/titleChecks.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -35,5 +36,6 @@ app.route('/api/pages', pagesRoutes);
 app.route('/api/import', importRoutes);
 app.route('/api/vehicle-specs', vehicleSpecsRoutes);
 app.route('/api/recalls', recallsRoutes);
+app.route('/api/title-checks', titleChecksRoutes);
 
 export default app;
