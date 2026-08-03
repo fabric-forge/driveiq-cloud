@@ -83,8 +83,15 @@ searchRoutes.post('/ask', async (c) => {
 	// yet or a query with no relevant chunks shouldn't block answering
 	// service-history questions ("when was my last oil change?"), which need
 	// no document context at all.
+	//
+	// limit=8, not 5: a narrow structured fact (e.g. one NHTSA VIN-decode
+	// sentence confirming a feature isn't equipped) can score close to but
+	// just below several topically-similar prose pages from a much longer
+	// document (e.g. the Owner's Manual's "driving support systems"
+	// section), which would otherwise fill every slot in a tighter cutoff
+	// and silently exclude the chunk that actually answers the question.
 	const info = await collectionInfo(c.env);
-	const results = info && info.points_count > 0 ? await searchDocuments(c.env, body.query, 5, 0.35) : [];
+	const results = info && info.points_count > 0 ? await searchDocuments(c.env, body.query, 8, 0.35) : [];
 
 	const docContext = results.length
 		? results.map((r) => `[${r.document_name}${r.page_number ? `, p.${r.page_number}` : ''}]\n${r.content}`).join('\n\n---\n\n')
