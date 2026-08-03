@@ -116,7 +116,38 @@ searchRoutes.post('/ask', async (c) => {
 			? `Service history for this vehicle (current odometer: ${vehicle?.current_mileage?.toLocaleString() ?? 'unknown'} mi). "Next Due" is projected from the manufacturer-recommended interval after the last time that service was performed — use it to tell the owner when their next service of that type is due.\n\n${formatServiceStatusTable(buildServiceStatus(records, vehicle?.current_mileage ?? null))}`
 			: null;
 
-	if (!docContext && !serviceHistoryContext) {
+	// NHTSA recalls — fetched from the structured table, not left to RAG
+	// retrieval over the ingested VIN-report PDF. Semantic search only
+	// returns its top-K most relevant chunks, so a broad question like "how
+	// many recalls are there" was silently undercounting (missing whichever
+	// campaigns didn't make the top 5). This table is the exact, complete
+	// list every time.
+	const { results: recalls } = vehicle
+		? await c.env.DB.prepare(
+				'SELECT nhtsa_campaign, component, summary, remedy, report_receipt_date, status FROM recalls WHERE vehicle_id = ? ORDER BY report_receipt_date DESC'
+			)
+				.bind(vehicle.id)
+				.all<{
+					nhtsa_campaign: string;
+					component: string;
+					summary: string;
+					remedy: string | null;
+					report_receipt_date: string | null;
+					status: string;
+				}>()
+		: { results: [] };
+
+	const recallsContext =
+		recalls.length > 0
+			? `NHTSA recalls on file for this VIN (${recalls.length} total). This is the complete, authoritative list — not a partial search result.\n\n${recalls
+					.map(
+						(r) =>
+							`- ${r.nhtsa_campaign} (${r.component}), reported ${r.report_receipt_date ?? 'unknown date'}, status: ${r.status}\n  ${r.summary}${r.remedy ? `\n  Remedy: ${r.remedy}` : ''}`
+					)
+					.join('\n')}`
+			: null;
+
+	if (!docContext && !serviceHistoryContext && !recallsContext) {
 		return c.json({
 			answer:
 				"I couldn't find relevant information in your vehicle documentation or service history for this question. Try rephrasing, or consult your owner's manual directly.",
@@ -131,15 +162,17 @@ searchRoutes.post('/ask', async (c) => {
 	const system = `You are Aiana, an intelligent assistant for vehicle owners.
 ${vehicleLine}
 
-Answer using the provided documentation and/or service history table below, whichever is relevant to the question. Be concise, practical, and safety-focused.
+Answer using the provided documentation, service history table, and/or recalls list below, whichever is relevant to the question. Be concise, practical, and safety-focused.
 When asked about a past service (e.g. "when was my last oil change"), answer from the service history table, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
 If a service has never been logged ("Never logged" status), say so plainly rather than guessing a date.
+When asked about recalls (e.g. "how many recalls", "is there an open recall"), always answer from the recalls list, not from any recall mentions that happen to appear in retrieved documentation — the list is the complete, exact set for this VIN.
 If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.
 If the owner describes a scheduled or planned service appointment (a specific date and/or mileage), use the create_reminder tool to add it for them — don't just say you will, actually call the tool.`;
 
 	const contextParts = [
 		docContext ? `Context from vehicle documentation:\n${docContext}` : null,
 		serviceHistoryContext,
+		recallsContext,
 	].filter((p): p is string => p !== null);
 
 	const messages: LLMMessage[] = [{ role: 'user', content: `${contextParts.join('\n\n---\n\n')}\n\nQuestion: ${body.query}` }];
