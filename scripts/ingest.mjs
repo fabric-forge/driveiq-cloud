@@ -24,7 +24,17 @@ const DOCUMENTS = [
 		name: 'CARFAX Vehicle History Report',
 	},
 	{ file: '2018_Toyota_4Runner_Maintenance_Report.pdf', name: 'Maintenance Audit Report' },
+	{ file: 'T-MMS-184Runner.pdf', name: 'Warranty & Maintenance Guide' },
 ];
+
+// Optional CLI filter: `node scripts/ingest.mjs "Warranty"` ingests only
+// documents whose name/file contains the given substring, so adding one new
+// document doesn't re-ingest (and duplicate) everything already in Qdrant —
+// upsertChunks() assigns a fresh random point ID every run, it doesn't dedupe.
+const filter = process.argv[2];
+const documentsToRun = filter
+	? DOCUMENTS.filter((d) => d.name.includes(filter) || d.file.includes(filter))
+	: DOCUMENTS;
 
 const CHUNK_SIZE = 500;
 const CHUNK_OVERLAP = 50;
@@ -100,7 +110,8 @@ async function ingestDocument({ file, name }) {
 }
 
 async function main() {
-	for (const doc of DOCUMENTS) {
+	if (documentsToRun.length === 0) throw new Error(`No document matches filter "${filter}"`);
+	for (const doc of documentsToRun) {
 		await ingestDocument(doc);
 	}
 	console.log('\nAll documents ingested.');

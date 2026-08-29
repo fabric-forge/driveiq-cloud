@@ -23,7 +23,17 @@ const DOCUMENTS = [
 		name: 'CARFAX Vehicle History Report',
 	},
 	{ file: '2018_Toyota_4Runner_Maintenance_Report.pdf', name: 'Maintenance Audit Report' },
+	{ file: 'T-MMS-184Runner.pdf', name: 'Warranty & Maintenance Guide' },
 ];
+
+// Optional CLI filter, same convention as ingest.mjs — R2 PUTs are keyed by
+// document/page/variant so re-running is idempotent (unlike Qdrant text
+// ingestion), but filtering still avoids needlessly re-rendering/re-uploading
+// hundreds of pages for documents that haven't changed.
+const filter = process.argv[2];
+const documentsToRun = filter
+	? DOCUMENTS.filter((d) => d.name.includes(filter) || d.file.includes(filter))
+	: DOCUMENTS;
 
 const WORKER_URL = process.env.WORKER_URL ?? 'http://localhost:8787';
 const BATCH_PAGES = 10; // pages rendered per getScreenshot() call, bounds memory use
@@ -71,7 +81,8 @@ async function renderDocument({ file, name }) {
 }
 
 async function main() {
-	for (const doc of DOCUMENTS) {
+	if (documentsToRun.length === 0) throw new Error(`No document matches filter "${filter}"`);
+	for (const doc of documentsToRun) {
 		await renderDocument(doc);
 	}
 	console.log('\nAll documents rendered.');
