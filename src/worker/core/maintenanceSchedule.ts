@@ -25,6 +25,15 @@ export const MAINTENANCE_SCHEDULE: ScheduleItem[] = [
 	{ type: 'brake_pads_rear', name: 'Rear Brake Pads', intervalMiles: 50000, intervalMonths: 60 },
 	{ type: 'battery', name: 'Battery', intervalMiles: 50000, intervalMonths: 48 },
 	{ type: 'wiper_blades', name: 'Wiper Blades', intervalMiles: 15000, intervalMonths: 12 },
+	// Not part of Toyota's normal-condition owner's manual interval (front/rear
+	// diff and transfer case are "inspect only" there) — these three follow
+	// Toyota's severe-duty schedule instead, per the owner's dealership
+	// recommending it regardless of what the normal-condition documentation
+	// says. 30k mi is Toyota's standard severe-duty interval for these three
+	// on 4WD trucks/SUVs (4Runner, Tacoma, Tundra).
+	{ type: 'front_differential', name: 'Front Differential Fluid', intervalMiles: 30000, intervalMonths: 36 },
+	{ type: 'rear_differential', name: 'Rear Differential Fluid', intervalMiles: 30000, intervalMonths: 36 },
+	{ type: 'transfer_case', name: 'Transfer Case Fluid', intervalMiles: 30000, intervalMonths: 36 },
 ];
 
 export interface MaintenanceRecordRow {

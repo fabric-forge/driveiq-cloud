@@ -9,7 +9,7 @@ import type { Env } from '../env.js';
 import { searchDocuments, collectionInfo, embedBatch, upsertChunks, ensureCollection } from '../core/qdrant.js';
 import { generateWithTools, extractText, type AnthropicContentBlock, type AnthropicTool, type LLMMessage } from '../core/anthropic.js';
 import { buildServiceStatus, formatServiceStatusTable, MAINTENANCE_SCHEDULE, type MaintenanceRecordRow } from '../core/maintenanceSchedule.js';
-import { updateReminder, referenceNumber } from '../core/reminders.js';
+import { updateReminder, referenceNumber, parseMaintenanceTypes, serializeMaintenanceTypes } from '../core/reminders.js';
 
 // The same type vocabulary maintenance_records (and the forecast table
 // below) already use — see MAINTENANCE_SCHEDULE. Reused as the
@@ -34,10 +34,10 @@ const CREATE_REMINDER_TOOL: AnthropicTool = {
 			due_mileage: { type: 'number', description: 'Mileage the appointment is tied to, if the owner mentioned one' },
 			description: { type: 'string', description: "Any extra detail the owner mentioned (location, reason, provider), if any" },
 			maintenance_type: {
-				type: 'string',
-				enum: MAINTENANCE_TYPES,
+				type: 'array',
+				items: { type: 'string', enum: MAINTENANCE_TYPES },
 				description:
-					'Set this when the appointment is for one of these standard services — it tells the app this appointment already covers that forecasted service, so the forecast table stops showing a separate (and now redundant) projection for it. Leave unset for anything that isn\'t one of these exact types (e.g. a one-off repair).',
+					"List the standard service(s) this appointment covers, if any — e.g. one ticket combining Front Differential, Rear Differential, and Transfer Case service should list all three types. It tells the app this appointment already covers those forecasted services, so the forecast table stops showing separate (now redundant) projections for them. Leave unset/empty for anything that isn't one of these exact types (e.g. a one-off repair).",
 			},
 		},
 		required: ['title'],
@@ -73,10 +73,10 @@ const UPDATE_REMINDER_TOOL: AnthropicTool = {
 				description: "'appointment' to mark it as a scheduled appointment, 'none' to make it a normal reminder",
 			},
 			maintenance_type: {
-				type: 'string',
-				enum: [...MAINTENANCE_TYPES, 'none'],
+				type: 'array',
+				items: { type: 'string', enum: MAINTENANCE_TYPES },
 				description:
-					'Set to one of these standard service types when this reminder/appointment covers that forecasted service — this hides the now-redundant forecast projection for it. Use this when the owner points out that a forecast item (e.g. "Engine Coolant — Overdue") is a duplicate of an appointment they already scheduled: set the matching type here rather than creating a new reminder. \'none\' clears it.',
+					'The full replacement list of standard service types this reminder/appointment covers — this hides the now-redundant forecast projection for each one listed. Use this when the owner points out that a forecast item (e.g. "Engine Coolant — Overdue") is a duplicate of an appointment they already scheduled: pass the existing list plus the newly matched type(s), not just the new one, since this replaces rather than appends. Pass an empty array to clear it entirely.',
 			},
 			is_recurring: { type: 'boolean', description: 'Whether this reminder should automatically recur after being completed' },
 			recurrence_interval_days: { type: 'number', description: 'Days between recurrences, if recurring by date' },
@@ -256,7 +256,7 @@ searchRoutes.post('/ask', async (c) => {
 	// rather than guessing one.
 	const remindersContext =
 		reminderRows.length > 0
-			? `Reminders currently on the owner's "What's Next" list — each is either an Appointment (a specific scheduled visit) or a plain Reminder (a due point the owner or Aiana set without booking a visit). Use the id to edit one with the update_reminder tool; if the owner quotes a reference number instead of a title, match it against the ref shown here. A reminder tagged "covers: <type>" already supersedes that type's forecast entry — one without a "covers" tag but whose title clearly matches a forecast item is a likely duplicate you should offer to link (set maintenance_type via update_reminder).\n\n${reminderRows
+			? `Reminders currently on the owner's "What's Next" list — each is either an Appointment (a specific scheduled visit) or a plain Reminder (a due point the owner or Aiana set without booking a visit). Use the id to edit one with the update_reminder tool; if the owner quotes a reference number instead of a title, match it against the ref shown here. A reminder tagged "covers: <type(s)>" already supersedes those forecast entries — one without a "covers" tag but whose title clearly matches a forecast item is a likely duplicate you should offer to link (set maintenance_type via update_reminder, passing its full covers list plus the new type — that field replaces, it doesn't append).\n\n${reminderRows
 					.map((r) => {
 						const due = [r.due_date ? `due ${r.due_date}` : null, r.due_mileage ? `${r.due_mileage.toLocaleString()} mi` : null]
 							.filter(Boolean)
@@ -272,7 +272,8 @@ searchRoutes.post('/ask', async (c) => {
 								: '';
 						const ref = referenceNumber(r.id, r.created_at);
 						const label = r.category === 'appointment' ? 'Appointment' : 'Reminder';
-						const covers = r.maintenance_type ? ` [covers: ${r.maintenance_type}]` : '';
+						const types = parseMaintenanceTypes(r.maintenance_type);
+						const covers = types.length > 0 ? ` [covers: ${types.join(', ')}]` : '';
 						return `- id ${r.id} (ref ${ref}): "${r.title}" [${label}, ${r.reminder_type}]${covers}${due ? ` — ${due}` : ''}${recurrence}${r.description ? `\n  ${r.description}` : ''}`;
 					})
 					.join('\n')}`
@@ -305,7 +306,7 @@ Every reminder/appointment has a short reference number (e.g. "DR-2026-0042", sh
 Verify categorization before you act or answer — these are easy to conflate, and getting them wrong misleads the owner about what's actually scheduled:
 - Reminder vs. Appointment: both are real rows in the reminders list, distinguished only by whether the owner has an actual booked visit (Appointment) or just a due point they want flagged (Reminder). If it's not clear which the owner means when creating one, ask.
 - Reminder/Appointment vs. Forecast: the reminders list is owner- (or Aiana-) set rows with an id; the forecast table is an automatic projection with no row behind it. If the owner refers to "my reminder" or "my appointment" for a service type that only appears in the forecast table (no matching entry in the reminders list), say plainly that there's no reminder set for it yet — it's only a projected due date — and ask if they'd like you to create one, rather than treating the forecast entry as if it were an editable reminder.
-- Duplicate forecast entries: there's no way to delete a forecast projection directly — it's recomputed from the maintenance schedule and service history every time, not a row. What *does* make one disappear is tagging the appointment/reminder that now covers it with maintenance_type (matching the forecast item's type, e.g. 'coolant'). If the owner says a forecast item (e.g. "Engine Coolant — Overdue") is now a duplicate because they already scheduled an appointment for it, don't say you can't remove it and stop there — find that reminder in the list below, check whether it already has a "covers" tag, and if not, call update_reminder with maintenance_type set to the matching forecast type so the duplicate stops showing. Only create_reminder/update_reminder set this — the owner can't do it from the UI, so do it for them once you've confirmed which reminder and which forecast type match.
+- Duplicate forecast entries: there's no way to delete a forecast projection directly — it's recomputed from the maintenance schedule and service history every time, not a row. What *does* make one disappear is tagging the appointment/reminder that now covers it with maintenance_type (matching the forecast item's type, e.g. 'coolant'). It's a list — one ticket can cover several services at once (e.g. front differential, rear differential, and transfer case fluid all in the same visit), so when adding a type, pass the reminder's existing covers list plus the new one(s), not just the new one — update_reminder replaces the whole list rather than appending. If the owner says a forecast item (e.g. "Engine Coolant — Overdue") is now a duplicate because they already scheduled an appointment for it, don't say you can't remove it and stop there — find that reminder in the list below and call update_reminder with maintenance_type set so the duplicate stops showing. Only create_reminder/update_reminder set this — the owner can't do it from the UI, so do it for them once you've confirmed which reminder and which forecast type(s) match. Note some forecast entries (front_differential, rear_differential, transfer_case) follow a dealership-recommended severe-duty interval rather than the normal-condition owner's manual schedule — say so if the owner asks why the manual doesn't mention them.
 - Overdue vs. next scheduled: always take this from the actual Status value (forecast table) or due_date/due_mileage vs. current mileage/today (reminders list) — never infer it from how the owner phrases the question. If their phrasing assumes a status the data doesn't support (e.g. they call something "overdue" that the forecast table shows as OK, or ask about "the overdue one" when several services are overdue), point out the mismatch or ask which one they mean instead of going along with the assumption.`;
 
 	const contextParts = [
@@ -341,7 +342,7 @@ Verify categorization before you act or answer — these are easy to conflate, a
 					due_date?: string;
 					due_mileage?: number;
 					description?: string;
-					maintenance_type?: string;
+					maintenance_type?: string[];
 				};
 				const reminderType = input.due_date && input.due_mileage ? 'both' : input.due_mileage ? 'mileage' : 'date';
 
@@ -359,7 +360,7 @@ Verify categorization before you act or answer — these are easy to conflate, a
 							reminderType,
 							input.due_date ?? null,
 							input.due_mileage ?? null,
-							input.maintenance_type ?? null
+							serializeMaintenanceTypes(input.maintenance_type ?? [])
 						)
 						.first<{ id: number; created_at: string }>();
 					reminderCreated = true;
@@ -382,7 +383,7 @@ Verify categorization before you act or answer — these are easy to conflate, a
 					due_date?: string;
 					due_mileage?: number;
 					category?: 'appointment' | 'none';
-					maintenance_type?: string;
+					maintenance_type?: string[];
 					is_recurring?: boolean;
 					recurrence_interval_days?: number;
 					recurrence_interval_miles?: number;
@@ -404,7 +405,7 @@ Verify categorization before you act or answer — these are easy to conflate, a
 					await updateReminder(c.env, existing.id, {
 						...rest,
 						...(category !== undefined ? { category: category === 'none' ? null : category } : {}),
-						...(maintenance_type !== undefined ? { maintenance_type: maintenance_type === 'none' ? null : maintenance_type } : {}),
+						...(maintenance_type !== undefined ? { maintenance_type: serializeMaintenanceTypes(maintenance_type) } : {}),
 					});
 					reminderUpdated = true;
 					const ref = referenceNumber(existing.id, existing.created_at);
