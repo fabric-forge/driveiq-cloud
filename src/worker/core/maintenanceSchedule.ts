@@ -111,15 +111,17 @@ export function buildServiceStatus(
 }
 
 /** Renders the service status list as a compact markdown table for the
- * system prompt. */
+ * system prompt. Includes the raw `type` slug (e.g. "coolant") alongside the
+ * display name — Aiana needs the exact slug, not the name, when tagging a
+ * reminder's maintenance_type to link it to one of these forecast rows. */
 export function formatServiceStatusTable(statuses: ServiceStatus[]): string {
-	const header = '| Service | Last Performed | Next Due (mileage) | Next Due (est. date) | Status |\n|---|---|---|---|---|';
+	const header = '| Service | Type | Last Performed | Next Due (mileage) | Next Due (est. date) | Status |\n|---|---|---|---|---|---|';
 	const rows = statuses.map((s) => {
 		const last = s.lastPerformedDate ? `${s.lastPerformedDate} @ ${s.lastPerformedMileage?.toLocaleString()} mi` : 'No record on file';
 		const dueMi = s.status === 'no_record' || s.milesRemaining === null ? '—' : `${s.dueMileage.toLocaleString()} mi`;
 		const dueDate = s.estimatedDueDate ?? '—';
 		const statusLabel = { overdue: 'OVERDUE', due_soon: 'Due soon', ok: 'OK', no_record: 'Never logged' }[s.status];
-		return `| ${s.name} | ${last} | ${dueMi} | ${dueDate} | ${statusLabel} |`;
+		return `| ${s.name} | ${s.type} | ${last} | ${dueMi} | ${dueDate} | ${statusLabel} |`;
 	});
 	return [header, ...rows].join('\n');
 }

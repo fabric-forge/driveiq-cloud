@@ -12,6 +12,7 @@ export const REMINDER_UPDATABLE_FIELDS = [
 	'due_date',
 	'due_mileage',
 	'category',
+	'maintenance_type',
 	'is_recurring',
 	'recurrence_interval_days',
 	'recurrence_interval_miles',
