@@ -10,6 +10,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../env.js';
+import { updateReminder } from '../core/reminders.js';
 
 export const reminderRoutes = new Hono<{ Bindings: Env }>();
 
@@ -90,43 +91,13 @@ reminderRoutes.post('/', async (c) => {
 	return c.json(reminder, 201);
 });
 
-const UPDATABLE_FIELDS = ['title', 'description', 'due_date', 'due_mileage', 'notify_days_before', 'notify_miles_before'] as const;
-
 reminderRoutes.patch('/:id{[0-9]+}', async (c) => {
 	const id = Number(c.req.param('id'));
 	const existing = await c.env.DB.prepare('SELECT * FROM reminders WHERE id = ?').bind(id).first();
 	if (!existing) return c.json({ detail: 'Reminder not found' }, 404);
 
 	const body = await c.req.json();
-	const sets: string[] = [];
-	const values: unknown[] = [];
-
-	for (const field of UPDATABLE_FIELDS) {
-		if (body[field] !== undefined) {
-			sets.push(`${field} = ?`);
-			values.push(body[field]);
-		}
-	}
-	if (body.is_active !== undefined) {
-		sets.push('is_active = ?');
-		values.push(body.is_active ? 1 : 0);
-	}
-	if (body.is_completed !== undefined) {
-		sets.push('is_completed = ?');
-		values.push(body.is_completed ? 1 : 0);
-		if (body.is_completed) {
-			sets.push('completed_at = ?');
-			values.push(new Date().toISOString());
-		}
-	}
-	if (sets.length === 0) return c.json(existing);
-
-	sets.push("updated_at = datetime('now')");
-	values.push(id);
-
-	const updated = await c.env.DB.prepare(`UPDATE reminders SET ${sets.join(', ')} WHERE id = ? RETURNING *`)
-		.bind(...values)
-		.first();
+	const updated = await updateReminder(c.env, id, body);
 	return c.json(updated);
 });
 
