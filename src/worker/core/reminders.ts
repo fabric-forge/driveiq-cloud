@@ -57,3 +57,24 @@ export async function updateReminder(env: Env, id: number, body: Record<string, 
 		.bind(...values)
 		.first();
 }
+
+// Human-friendly reference for a reminder/appointment — e.g. "DR-2026-0042" —
+// so the owner has something short to quote back (to a shop, or to Aiana)
+// instead of the bare row id. Derived from the row's own id and created_at
+// rather than stored: it's always in sync, needs no backfill for existing
+// rows, and (since id is already unique) can't collide.
+export function referenceNumber(id: number, createdAt: string): string {
+	const year = createdAt.slice(0, 4);
+	return `DR-${year}-${String(id).padStart(4, '0')}`;
+}
+
+// Adds `reference_number` to a reminder row (or passes null through) —
+// every route response and every context/tool-result Aiana sees should be
+// wrapped with this so the reference number is always present alongside id.
+export function withReferenceNumber<T extends Record<string, unknown>>(row: T): T & { reference_number: string } {
+	return { ...row, reference_number: referenceNumber(row.id as number, row.created_at as string) };
+}
+
+export function withReferenceNumbers<T extends Record<string, unknown>>(rows: T[]): (T & { reference_number: string })[] {
+	return rows.map(withReferenceNumber);
+}
