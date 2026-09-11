@@ -79,3 +79,25 @@ export function withReferenceNumber<T extends Record<string, unknown>>(row: T): 
 export function withReferenceNumbers<T extends Record<string, unknown>>(rows: T[]): (T & { reference_number: string })[] {
 	return rows.map(withReferenceNumber);
 }
+
+// `maintenance_type` holds the set of MAINTENANCE_SCHEDULE types a reminder
+// covers (a ticket can span more than one service — see the "differential +
+// transfer case" case), stored JSON-encoded like maintenance_records' other
+// multi-value columns (parts_used, documents, photos). A plain string is
+// also accepted on read as a single-type value, for rows written before
+// multi-type support existed.
+export function parseMaintenanceTypes(raw: string | null): string[] {
+	if (!raw) return [];
+	try {
+		const parsed = JSON.parse(raw);
+		if (Array.isArray(parsed)) return parsed.filter((t): t is string => typeof t === 'string');
+	} catch {
+		// Not JSON — an old single-type value written before multi-type
+		// support; treat the whole string as that one type.
+	}
+	return [raw];
+}
+
+export function serializeMaintenanceTypes(types: string[]): string | null {
+	return types.length > 0 ? JSON.stringify(types) : null;
+}
