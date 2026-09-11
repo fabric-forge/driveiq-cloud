@@ -9,7 +9,7 @@ import type { Env } from '../env.js';
 import { searchDocuments, collectionInfo, embedBatch, upsertChunks, ensureCollection } from '../core/qdrant.js';
 import { generateWithTools, extractText, type AnthropicContentBlock, type AnthropicTool, type LLMMessage } from '../core/anthropic.js';
 import { buildServiceStatus, formatServiceStatusTable, type MaintenanceRecordRow } from '../core/maintenanceSchedule.js';
-import { updateReminder } from '../core/reminders.js';
+import { updateReminder, referenceNumber } from '../core/reminders.js';
 
 // Lets the owner tell Aiana about a scheduled appointment in plain
 // conversation ("I have an oil change booked for 9/15 at Kari Toyota")
@@ -204,7 +204,7 @@ searchRoutes.post('/ask', async (c) => {
 	// reminders list" without a document search.
 	const { results: reminderRows } = vehicle
 		? await c.env.DB.prepare(
-				`SELECT id, title, description, reminder_type, due_date, due_mileage, category, is_recurring,
+				`SELECT id, created_at, title, description, reminder_type, due_date, due_mileage, category, is_recurring,
 				        recurrence_interval_days, recurrence_interval_miles, notify_days_before, notify_miles_before
 				 FROM reminders WHERE vehicle_id = ? AND is_active = 1 AND is_completed = 0
 				 ORDER BY due_date IS NOT NULL, due_date ASC`
@@ -212,6 +212,7 @@ searchRoutes.post('/ask', async (c) => {
 				.bind(vehicle.id)
 				.all<{
 					id: number;
+					created_at: string;
 					title: string;
 					description: string | null;
 					reminder_type: string;
@@ -230,10 +231,13 @@ searchRoutes.post('/ask', async (c) => {
 	// each card — these are real rows the owner (or Aiana, via
 	// create_reminder) explicitly set, distinct from the auto-computed
 	// Forecast entries above. Only these have an id, so only these can be
-	// passed to update_reminder.
+	// passed to update_reminder. Each also carries its reference number
+	// (e.g. "DR-2026-0042", same one shown on the card in driveiq-ui) so the
+	// owner can quote that instead of a title — match it back to the id here
+	// rather than guessing one.
 	const remindersContext =
 		reminderRows.length > 0
-			? `Reminders currently on the owner's "What's Next" list — each is either an Appointment (a specific scheduled visit) or a plain Reminder (a due point the owner or Aiana set without booking a visit). Use the id to edit one with the update_reminder tool.\n\n${reminderRows
+			? `Reminders currently on the owner's "What's Next" list — each is either an Appointment (a specific scheduled visit) or a plain Reminder (a due point the owner or Aiana set without booking a visit). Use the id to edit one with the update_reminder tool; if the owner quotes a reference number instead of a title, match it against the ref shown here.\n\n${reminderRows
 					.map((r) => {
 						const due = [r.due_date ? `due ${r.due_date}` : null, r.due_mileage ? `${r.due_mileage.toLocaleString()} mi` : null]
 							.filter(Boolean)
@@ -247,8 +251,9 @@ searchRoutes.post('/ask', async (c) => {
 										.filter(Boolean)
 										.join(' / ')})`
 								: '';
+						const ref = referenceNumber(r.id, r.created_at);
 						const label = r.category === 'appointment' ? 'Appointment' : 'Reminder';
-						return `- id ${r.id}: "${r.title}" [${label}, ${r.reminder_type}]${due ? ` — ${due}` : ''}${recurrence}${r.description ? `\n  ${r.description}` : ''}`;
+						return `- id ${r.id} (ref ${ref}): "${r.title}" [${label}, ${r.reminder_type}]${due ? ` — ${due}` : ''}${recurrence}${r.description ? `\n  ${r.description}` : ''}`;
 					})
 					.join('\n')}`
 			: null;
@@ -275,6 +280,7 @@ When asked about recalls (e.g. "how many recalls", "is there an open recall"), a
 If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.
 If the owner describes a scheduled or planned service appointment (a specific date and/or mileage), use the create_reminder tool to add it for them — don't just say you will, actually call the tool.
 If the owner asks to change, reschedule, correct, rename, or otherwise edit something about a reminder that's already on their list (see the reminders list below), use the update_reminder tool with that reminder's id and only the fields that should change — don't call create_reminder for an edit, and don't just describe the change without calling the tool. If you can't tell which reminder they mean, ask instead of guessing.
+Every reminder/appointment has a short reference number (e.g. "DR-2026-0042", shown on its card in the app and listed next to its id below). After create_reminder or update_reminder succeeds, mention that reference number in your reply. If the owner quotes one back to you instead of a title, match it against the ref shown in the reminders list below rather than asking them to repeat the title.
 
 Verify categorization before you act or answer — these are easy to conflate, and getting them wrong misleads the owner about what's actually scheduled:
 - Reminder vs. Appointment: both are real rows in the reminders list, distinguished only by whether the owner has an actual booked visit (Appointment) or just a due point they want flagged (Reminder). If it's not clear which the owner means when creating one, ask.
@@ -312,20 +318,25 @@ Verify categorization before you act or answer — these are easy to conflate, a
 				const input = toolUse.input as { title: string; due_date?: string; due_mileage?: number; description?: string };
 				const reminderType = input.due_date && input.due_mileage ? 'both' : input.due_mileage ? 'mileage' : 'date';
 
+				let createdRef: string | null = null;
 				if (vehicle) {
-					await c.env.DB.prepare(
+					const inserted = await c.env.DB.prepare(
 						`INSERT INTO reminders (vehicle_id, title, description, reminder_type, due_date, due_mileage, category, notify_days_before, notify_miles_before)
-						 VALUES (?, ?, ?, ?, ?, ?, 'appointment', 7, 500)`
+						 VALUES (?, ?, ?, ?, ?, ?, 'appointment', 7, 500)
+						 RETURNING id, created_at`
 					)
 						.bind(vehicle.id, input.title, input.description ?? null, reminderType, input.due_date ?? null, input.due_mileage ?? null)
-						.run();
+						.first<{ id: number; created_at: string }>();
 					reminderCreated = true;
+					if (inserted) createdRef = referenceNumber(inserted.id, inserted.created_at);
 				}
 
 				toolResults.push({
 					type: 'tool_result',
 					tool_use_id: toolUse.id!,
-					content: reminderCreated ? `Added "${input.title}" to the owner's What's Next list.` : 'Could not add the reminder — no vehicle on record.',
+					content: reminderCreated
+						? `Added "${input.title}" to the owner's What's Next list (reference ${createdRef}). Mention this reference number in your reply so the owner has it.`
+						: 'Could not add the reminder — no vehicle on record.',
 				});
 			} else if (toolUse.name === 'update_reminder') {
 				const input = toolUse.input as {
@@ -344,9 +355,9 @@ Verify categorization before you act or answer — these are easy to conflate, a
 				};
 
 				const existing = vehicle
-					? await c.env.DB.prepare('SELECT id, title FROM reminders WHERE id = ? AND vehicle_id = ?')
+					? await c.env.DB.prepare('SELECT id, created_at, title FROM reminders WHERE id = ? AND vehicle_id = ?')
 							.bind(input.reminder_id, vehicle.id)
-							.first<{ id: number; title: string }>()
+							.first<{ id: number; created_at: string; title: string }>()
 					: null;
 
 				let toolResultText: string;
@@ -359,7 +370,8 @@ Verify categorization before you act or answer — these are easy to conflate, a
 						...(category !== undefined ? { category: category === 'none' ? null : category } : {}),
 					});
 					reminderUpdated = true;
-					toolResultText = `Updated "${existing.title}".`;
+					const ref = referenceNumber(existing.id, existing.created_at);
+					toolResultText = `Updated "${existing.title}" (reference ${ref}). Mention this reference number in your reply so the owner has it.`;
 				}
 
 				toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id!, content: toolResultText });

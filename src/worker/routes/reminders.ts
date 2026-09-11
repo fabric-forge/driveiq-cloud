@@ -10,7 +10,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../env.js';
-import { updateReminder } from '../core/reminders.js';
+import { updateReminder, withReferenceNumber, withReferenceNumbers } from '../core/reminders.js';
 
 export const reminderRoutes = new Hono<{ Bindings: Env }>();
 
@@ -22,7 +22,7 @@ reminderRoutes.get('/', async (c) => {
 	sql += ' ORDER BY due_date IS NOT NULL, due_date ASC';
 
 	const { results } = await c.env.DB.prepare(sql).all();
-	return c.json(results);
+	return c.json(withReferenceNumbers(results as Record<string, unknown>[]));
 });
 
 // Registered before /:id — literal segment, not a record id.
@@ -49,14 +49,14 @@ reminderRoutes.get('/upcoming', async (c) => {
 		return false;
 	});
 
-	return c.json(upcoming);
+	return c.json(withReferenceNumbers(upcoming));
 });
 
 reminderRoutes.get('/:id{[0-9]+}', async (c) => {
 	const id = Number(c.req.param('id'));
 	const reminder = await c.env.DB.prepare('SELECT * FROM reminders WHERE id = ?').bind(id).first();
 	if (!reminder) return c.json({ detail: 'Reminder not found' }, 404);
-	return c.json(reminder);
+	return c.json(withReferenceNumber(reminder as Record<string, unknown>));
 });
 
 reminderRoutes.post('/', async (c) => {
@@ -88,7 +88,7 @@ reminderRoutes.post('/', async (c) => {
 		)
 		.first();
 
-	return c.json(reminder, 201);
+	return c.json(withReferenceNumber(reminder as Record<string, unknown>), 201);
 });
 
 reminderRoutes.patch('/:id{[0-9]+}', async (c) => {
@@ -98,7 +98,7 @@ reminderRoutes.patch('/:id{[0-9]+}', async (c) => {
 
 	const body = await c.req.json();
 	const updated = await updateReminder(c.env, id, body);
-	return c.json(updated);
+	return c.json(withReferenceNumber(updated as Record<string, unknown>));
 });
 
 reminderRoutes.post('/:id{[0-9]+}/complete', async (c) => {
@@ -170,7 +170,7 @@ reminderRoutes.post('/:id{[0-9]+}/complete', async (c) => {
 			.run();
 	}
 
-	return c.json(updated);
+	return c.json(withReferenceNumber(updated as Record<string, unknown>));
 });
 
 reminderRoutes.delete('/:id{[0-9]+}', async (c) => {
