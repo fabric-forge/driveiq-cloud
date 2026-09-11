@@ -41,7 +41,7 @@ const CREATE_REMINDER_TOOL: AnthropicTool = {
 const UPDATE_REMINDER_TOOL: AnthropicTool = {
 	name: 'update_reminder',
 	description:
-		"Edit an existing reminder on the owner's \"What's Next\" list — change its title, description, due date/mileage, type, recurrence, category, or notification lead time. Match it to one of the reminders listed in context and pass that reminder's id. Only call this when the owner is asking to change something about a reminder that already exists; use create_reminder instead for a brand-new appointment, and don't call this to mark a reminder done — that's a separate action the owner takes in the app.",
+		"Edit an existing reminder or appointment on the owner's \"What's Next\" list — change its title, description, due date/mileage, type, recurrence, category, or notification lead time. Match it to one of the reminders listed in context (not the forecast table — those are projections with no id) and pass that reminder's id. Only call this when the owner is asking to change something about a reminder/appointment that already exists; use create_reminder instead for a brand-new one, and don't call this to mark a reminder done — that's a separate action the owner takes in the app. If the service they're asking about only shows up in the forecast table, there's nothing to edit yet — tell them so and offer to create a reminder instead.",
 	input_schema: {
 		type: 'object',
 		properties: {
@@ -157,9 +157,14 @@ searchRoutes.post('/ask', async (c) => {
 				.all<MaintenanceRecordRow>()
 		: { results: [] as MaintenanceRecordRow[] };
 
+	// This is the same data driveiq-ui renders as "Forecast" cards — a
+	// projection computed from manufacturer intervals and service history,
+	// not a reminder the owner (or Aiana) set. There is no database row
+	// behind any of these entries, so they can't be edited with
+	// update_reminder — only a real entry in the reminders list below can.
 	const serviceHistoryContext =
 		records.length > 0
-			? `Service history for this vehicle (current odometer: ${vehicle?.current_mileage?.toLocaleString() ?? 'unknown'} mi). "Next Due" is projected from the manufacturer-recommended interval after the last time that service was performed — use it to tell the owner when their next service of that type is due.\n\n${formatServiceStatusTable(buildServiceStatus(records, vehicle?.current_mileage ?? null))}`
+			? `Forecast — projected next service due dates, computed from manufacturer intervals (current odometer: ${vehicle?.current_mileage?.toLocaleString() ?? 'unknown'} mi). Not reminders — there's no row to edit here, only to project from. "Status" is exactly one of OVERDUE (past due now), Due soon, OK (on schedule, not yet due), or Never logged (no service of this type on record) — always use this exact value rather than assuming a service is overdue or upcoming.\n\n${formatServiceStatusTable(buildServiceStatus(records, vehicle?.current_mileage ?? null))}`
 			: null;
 
 	// NHTSA recalls — fetched from the structured table, not left to RAG
@@ -221,9 +226,14 @@ searchRoutes.post('/ask', async (c) => {
 				}>()
 		: { results: [] };
 
+	// Labeled "Appointment"/"Reminder" to match the badge driveiq-ui shows on
+	// each card — these are real rows the owner (or Aiana, via
+	// create_reminder) explicitly set, distinct from the auto-computed
+	// Forecast entries above. Only these have an id, so only these can be
+	// passed to update_reminder.
 	const remindersContext =
 		reminderRows.length > 0
-			? `Reminders currently on the owner's "What's Next" list. Use the id to edit one with the update_reminder tool.\n\n${reminderRows
+			? `Reminders currently on the owner's "What's Next" list — each is either an Appointment (a specific scheduled visit) or a plain Reminder (a due point the owner or Aiana set without booking a visit). Use the id to edit one with the update_reminder tool.\n\n${reminderRows
 					.map((r) => {
 						const due = [r.due_date ? `due ${r.due_date}` : null, r.due_mileage ? `${r.due_mileage.toLocaleString()} mi` : null]
 							.filter(Boolean)
@@ -237,7 +247,8 @@ searchRoutes.post('/ask', async (c) => {
 										.filter(Boolean)
 										.join(' / ')})`
 								: '';
-						return `- id ${r.id}: "${r.title}" [${r.reminder_type}]${due ? ` — ${due}` : ''}${r.category ? ` [${r.category}]` : ''}${recurrence}${r.description ? `\n  ${r.description}` : ''}`;
+						const label = r.category === 'appointment' ? 'Appointment' : 'Reminder';
+						return `- id ${r.id}: "${r.title}" [${label}, ${r.reminder_type}]${due ? ` — ${due}` : ''}${recurrence}${r.description ? `\n  ${r.description}` : ''}`;
 					})
 					.join('\n')}`
 			: null;
@@ -257,13 +268,18 @@ searchRoutes.post('/ask', async (c) => {
 	const system = `You are Aiana, an intelligent assistant for vehicle owners.
 ${vehicleLine}
 
-Answer using the provided documentation, service history table, recalls list, and/or reminders list below, whichever is relevant to the question. Be concise, practical, and safety-focused.
-When asked about a past service (e.g. "when was my last oil change"), answer from the service history table, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
+Answer using the provided documentation, forecast table, recalls list, and/or reminders list below, whichever is relevant to the question. Be concise, practical, and safety-focused.
+When asked about a past service (e.g. "when was my last oil change"), answer from the forecast table's service history, then proactively add when the *next* one of that same service is due (mileage and/or estimated date) using the "Next Due" columns — don't make the owner ask a second question for that.
 If a service has never been logged ("Never logged" status), say so plainly rather than guessing a date.
 When asked about recalls (e.g. "how many recalls", "is there an open recall"), always answer from the NHTSA recalls list below, never from a CARFAX report's own "no open recalls reported to CARFAX" line — CARFAX's recall data feed is separate from NHTSA's and is frequently incomplete or stale, so that specific claim must be ignored even if it's the retrieved documentation's most relevant-looking match. The NHTSA recalls list is the complete, exact set for this VIN; if it's absent from the context below, say recall data isn't available rather than trusting a CARFAX summary line.
 If neither source fully answers the question, say what you found and suggest checking the full manual or logging the service.
 If the owner describes a scheduled or planned service appointment (a specific date and/or mileage), use the create_reminder tool to add it for them — don't just say you will, actually call the tool.
-If the owner asks to change, reschedule, correct, rename, or otherwise edit something about a reminder that's already on their list (see the reminders list below), use the update_reminder tool with that reminder's id and only the fields that should change — don't call create_reminder for an edit, and don't just describe the change without calling the tool. If you can't tell which reminder they mean, ask instead of guessing.`;
+If the owner asks to change, reschedule, correct, rename, or otherwise edit something about a reminder that's already on their list (see the reminders list below), use the update_reminder tool with that reminder's id and only the fields that should change — don't call create_reminder for an edit, and don't just describe the change without calling the tool. If you can't tell which reminder they mean, ask instead of guessing.
+
+Verify categorization before you act or answer — these are easy to conflate, and getting them wrong misleads the owner about what's actually scheduled:
+- Reminder vs. Appointment: both are real rows in the reminders list, distinguished only by whether the owner has an actual booked visit (Appointment) or just a due point they want flagged (Reminder). If it's not clear which the owner means when creating one, ask.
+- Reminder/Appointment vs. Forecast: the reminders list is owner- (or Aiana-) set rows with an id; the forecast table is an automatic projection with no row behind it. If the owner refers to "my reminder" or "my appointment" for a service type that only appears in the forecast table (no matching entry in the reminders list), say plainly that there's no reminder set for it yet — it's only a projected due date — and ask if they'd like you to create one, rather than treating the forecast entry as if it were an editable reminder.
+- Overdue vs. next scheduled: always take this from the actual Status value (forecast table) or due_date/due_mileage vs. current mileage/today (reminders list) — never infer it from how the owner phrases the question. If their phrasing assumes a status the data doesn't support (e.g. they call something "overdue" that the forecast table shows as OK, or ask about "the overdue one" when several services are overdue), point out the mismatch or ask which one they mean instead of going along with the assumption.`;
 
 	const contextParts = [
 		// Recalls and service history first — these are exact, structured facts
@@ -335,7 +351,7 @@ If the owner asks to change, reschedule, correct, rename, or otherwise edit some
 
 				let toolResultText: string;
 				if (!existing) {
-					toolResultText = `No reminder with id ${input.reminder_id} was found — nothing was changed.`;
+					toolResultText = `No reminder with id ${input.reminder_id} was found — nothing was changed. If this id was guessed rather than taken from the reminders list, tell the owner there's no reminder set for that service (it may only be a forecast projection) and ask if they'd like one created.`;
 				} else {
 					const { reminder_id, category, ...rest } = input;
 					await updateReminder(c.env, existing.id, {
