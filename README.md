@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/banner.svg" alt="driveiq-cloud: DriveIQ backend on Hono + Cloudflare Workers" width="100%"></p>
+
 # driveiq-cloud
 
 DriveIQ backend — Hono on Cloudflare Workers + D1. Serverless replatform of
@@ -40,3 +42,8 @@ npx wrangler deploy
 - `GET/POST/PATCH/DELETE /api/maintenance`, `GET /api/maintenance/types/summary`
 - `GET/POST/PATCH/DELETE /api/reminders`, `GET /api/reminders/upcoming`,
   `POST /api/reminders/:id/complete`
+
+<!-- org-footer -->
+---
+
+<p align="center"><sub>Part of <a href="https://github.com/fabric-forge">fabric-forge</a> · built by <a href="https://github.com/ry-ops">ry-ops</a></sub></p>
