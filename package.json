@@ -24,7 +24,7 @@
     "@cloudflare/workers-types": "^5.20260710.1",
     "pdf-parse": "^2.4.5",
     "typescript": "^5.3.0",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "wrangler": "^4.149.0"
   },
   "engines": {
